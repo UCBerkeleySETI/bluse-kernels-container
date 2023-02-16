@@ -1,0 +1,12 @@
+{
+  "argv": [
+    "/usr/local/bin/singularity", "run",
+    "--app", "bluse_julia18_kernel",
+    "--bind", "/scratch",
+    "/kernel_images/bluse-kernels-container.sif",
+    "{connection_file}"
+  ],
+  "display_name": "BLUSE Julia 1.8",
+  "language": "julia",
+  "interrupt_mode": "signal"
+}

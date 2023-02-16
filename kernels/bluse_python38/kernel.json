@@ -1,0 +1,14 @@
+{
+  "argv": [
+    "/usr/local/bin/singularity", "run",
+    "--app", "bluse_python38_kernel",
+    "--bind", "/scratch",
+    "/kernel_images/bluse-kernels-container.sif",
+    "{connection_file}"
+  ],
+  "display_name": "BLUSE Python 3.8",
+  "language": "python",
+  "metadata": {
+    "debugger": true
+  }
+}

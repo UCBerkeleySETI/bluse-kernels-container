@@ -1,0 +1,240 @@
+Bootstrap: docker
+From: ubuntu:20.04
+
+%post
+# Various dependencies
+apt-get update && \
+apt-get install -y --no-install-recommends software-properties-common && \
+add-apt-repository -y universe && \
+apt-get install -y --no-install-recommends \
+    gcc \
+    git \
+    rsync \
+    unzip \
+    wget \
+    pkg-config \
+    libhdf5-dev
+
+# Install miniforge to /opt/miniconda
+miniforge_file=Miniforge3-4.10.0-0-Linux-x86_64.sh
+miniforge_sha256=9c81d4dd830991374d8041f6b835920cf7ad355ea3ae80c236cd74237d5315a1
+
+cd /opt
+wget https://github.com/conda-forge/miniforge/releases/download/4.10.0-0/$miniforge_file
+echo "$miniforge_sha256  $miniforge_file" \
+| sha256sum --check --quiet \
+&& /bin/bash $miniforge_file -b -s -p /opt/miniconda \
+&& rm /opt/$miniforge_file
+
+# Install Julia
+mkdir -p /opt/julia
+cd /opt/julia
+wget https://julialang-s3.julialang.org/bin/linux/x64/1.8/julia-1.8.5-linux-x86_64.tar.gz
+echo 'e71a24816e8fe9d5f4807664cbbb42738f5aa9fe05397d35c81d4c5d649b9d05  julia-1.8.5-linux-x86_64.tar.gz' \
+| sha256sum --check --quiet \
+&& tar xzf julia-1.8.5-linux-x86_64.tar.gz \
+&& rm julia-1.8.5-linux-x86_64.tar.gz
+
+# Make symlinks in /usr/local
+ln -s /opt/julia/julia-1.8.5/bin/julia /usr/local/bin/julia18
+ln -s julia18 /usr/local/bin/julia
+
+# Make shared environment 'ijulia+bluse' and install IJulia into it
+julia --startup-file=no -e '
+popfirst!(DEPOT_PATH)
+mkpath(DEPOT_PATH[1])
+
+# Make Conda.jl use /opt/miniconda environment
+ENV["CONDA_JL_HOME"] = "/opt/miniconda"
+# Ensure that PyCall.jl uses python from Conda.jl
+ENV["PYTHON"] = ""
+# Install (unused) kernelspecs into /usr/local/share
+ENV["XDG_DATA_HOME"] = "/usr/local/share"
+
+import Pkg
+Pkg.activate("ijulia+bluse", shared=true)
+Pkg.add([
+    "Casacore",
+    "Conda",
+    "CSV",
+    "DataFrames",
+    "EarthOrientation",
+    "ERFA",
+    "FFTW",
+    "FLoops",
+    "H5Zbitshuffle",
+    "HDF5",
+    "IJulia",
+    "JSON3",
+    "Optim",
+    "PlotlyJS",
+    "Plots",
+    "PrettyPrint",
+    "PyCall",
+    "Rotations",
+    "StatsBase",
+    "UnicodePlots",
+    "Unitful",
+    "YAML"
+])
+Pkg.add(url="https://github.com/david-macmahon/Blio.jl")
+Pkg.add(url="https://github.com/david-macmahon/PyCASA.jl")
+#Pkg.build()
+
+# Use Conda.jl to install packages for Python kernels and blimpy, setigen,
+# turbo_seti.
+using Conda
+Conda.pip_interop(true)
+
+# Install pip, notebook requirements, and packages that are available via Conda
+Conda.add([
+    "pip",
+    "ipython",
+    "ipykernel",
+    "jupyterthemes",
+    "pycapnp"
+])
+
+# pip install packages that are not available via Conda
+Conda.pip("install", [
+    "webio_jupyter_extension",
+    # Install h5py and HDF5 bitshuffle filter
+    "git+https://github.com/h5py/h5py",
+    "git+https://github.com/kiyo-masui/bitshuffle",
+    # Install blimpy, setigen, and turbo_seti
+    "blimpy",
+    "setigen",
+    "scikit-learn",
+    "turbo_seti"
+])
+'
+
+# Update casadata files
+rsync -az rsync://casa-rsync.nrao.edu/casa-data/ /opt/miniconda/lib/python3.8/site-packages/casadata/__data__
+
+%files
+##############################
+# ipython app
+##############################
+
+%apphelp ipython
+Start ipython with the container's conda environment activated.
+
+%apprun ipython
+    # Activate conda from within function to ensure that "$@" is empty
+    activate () . /opt/miniconda/bin/activate
+    activate
+    # Run ipython
+    exec ipython3 -i -c " " -- "${@}"
+
+%files
+##############################
+# julia app
+##############################
+
+%apphelp julia
+Start julia from the container.
+
+%appenv julia
+    # Make Conda.jl use /opt/miniconda environment
+    export CONDA_JL_HOME="/opt/miniconda"
+    # Ensure that PyCall.jl uses python from Conda.jl
+    export PYTHON=""
+    # Ensure that ijulia+base shared environment is on LOAD_PATH
+    export JULIA_LOAD_PATH=":@ijulia+bluse"
+
+%apprun julia
+    # Run julia
+    exec /opt/julia/julia-1.8.5/bin/julia -i -e "" -- "$@"
+
+%files
+##############################
+# bluse_python38_kernel app
+##############################
+
+%apphelp bluse_python38_kernel
+Start the BLUSE Python 3.8 Jupyter kernel.  You will need to provide Jupyer
+with a kernelspec file similar to the following:
+
+{
+    "argv": [
+        "/usr/local/bin/singularity",
+        "run", "--app", "bluse_python38_kernel",
+        "/path/to/container_file.sif",
+        "{connection_file}"
+    ],
+    "display_name": "BLUSE Python 3.8",
+    "language": "python",
+    "metadata": {
+    "debugger": true
+    }
+}
+
+%apprun bluse_python38_kernel
+    # Save connection file argument
+    connection_file="${1}"
+    # Remove first (and should be only) argument from "$@" because activate
+    # fails if "$@" has something other than an environment name in it
+    shift
+    # Activate miniconda environment
+    . /opt/miniconda/bin/activate
+    # Run kernel
+    exec python3 -m ipykernel_launcher -f "${connection_file}"
+
+%files
+##############################
+# bluse_julia18_kernel app
+##############################
+
+%apphelp bluse_julia18_kernel
+Start the BLUSE Julia 1.8 Jupyter kernel.  You will need to provide Jupyer with
+a kernelspec file similar to the following:
+
+{
+    "argv": [
+        "/usr/local/bin/singularity",
+        "run", "--app", "bluse_julia18_kernel",
+        "/path/to/bluse-notebook-kernels.sif",
+        "{connection_file}"
+    ],
+    "display_name": "BLUSE Julia 1.8.5",
+    "language": "julia",
+    "interrupt_mode": "signal"
+}
+
+%appenv bluse_julia18_kernel
+    # Make Conda.jl use /opt/miniconda environment
+    export CONDA_JL_HOME="/opt/miniconda"
+    # Ensure that PyCall.jl uses python from Conda.jl
+    export PYTHON=""
+    # Ensure that ijulia+base shared environment is on LOAD_PATH
+    export JULIA_LOAD_PATH=":@ijulia+bluse"
+
+%apprun bluse_julia18_kernel
+    # Run kernel
+    exec /opt/julia/julia-1.8.5/bin/julia -i \
+        --startup-file=no \
+        --color=yes  \
+        --project=@. \
+        --threads=8  \
+        /opt/julia/julia-1.8.5/local/share/julia/packages/IJulia/6TIq1/src/kernel.jl \
+        "$@"
+
+%help
+This container has two apps for command line users:
+
+- ipython - runs `ipython` with the container's conda environement activted
+- julia - runs `julia` with some preinstalled Julia packages on `LOAD_PATH`
+
+To run these apps, use:
+
+    singularity run --app APP_NAME CONTAINER_NAME [ARGS]
+
+This container also has two apps that function as notebook kernels:
+
+- bluse_python38_kernel
+- bluse_juli18_kernel
+
+To use these kernels you will need to provide a kernelspec file to Jupyter.
+See `singularity run-help --app APP_NAME CONTAINER_NAME` for a sample kernespec
+file.
